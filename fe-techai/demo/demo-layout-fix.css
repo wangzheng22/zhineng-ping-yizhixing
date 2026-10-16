@@ -1,0 +1,14 @@
+
+/* demo layout helpers — widths only, visuals from original-report.css */
+html,body{height:100%;margin:0}
+.report-box .report-component .body{display:flex;height:calc(100% - 39px);min-height:0}
+.report-box .report-component .body .currentBidderWrap{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.report-box .report-component .body .currentBidderWrap .currentBidderWrap-body{flex:1;display:flex;min-height:0;overflow:hidden}
+.report-box .report-component .body .currentBidderWrap .currentBidderWrap-body .module-wrap{height:100%}
+.demo-panes{display:flex;height:100%;min-height:0;width:100%}
+.demo-panes .clause_wrap{flex:0 0 24%;min-width:220px}
+.demo-panes .evalPoint_wrap{flex:0 0 26%;min-width:240px}
+.demo-panes .evalDetail_wrap{flex:1;min-width:320px}
+.bidder-row{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;margin:4px 8px;border-radius:4px;cursor:pointer;color:#fff}
+.bidder-row.active{background:rgba(37,154,255,.85)}
+.bidder-row .score{color:#ffe58f;font-weight:700}

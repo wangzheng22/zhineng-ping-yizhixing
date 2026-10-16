@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AI辅助评标系统</title>
+  <!-- 原项目技术栈：Vue 2 + Element UI（element-gui 同源）+ hash 路由 -->
+  <link rel="stylesheet" href="https://unpkg.com/element-ui@2.15.14/lib/theme-chalk/index.css">
+  <link rel="stylesheet" href="./assets/prototype.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 上传页 -->
+    <div class="page-upload" v-if="route === 'upload'">
+      <header class="header">
+        <div class="header-wrap">
+          <h1 class="logo">技术标文件智能分析</h1>
+          <nav class="nav">
+            <a :class="{ active: route === 'upload' }" @click="go('upload')">文件上传</a>
+            <a :class="{ active: route === 'AIreport' }" @click="go('AIreport')">AI分析结果</a>
+          </nav>
+          <span class="user">
+            <el-avatar :size="28" icon="el-icon-user-solid"></el-avatar>
+            Glodon
+          </span>
+        </div>
+      </header>
+      <div class="upload-view-wrap">
+        <div class="upload-view">
+          <div class="tenderItem">
+            <el-button type="primary" @click="mockUploadTender">上传招标文件</el-button>
+            <el-table :data="tenderFileList" style="margin-top: 10px">
+              <el-table-column type="index" label="序号" width="60"></el-table-column>
+              <el-table-column prop="name" label="文件名称"></el-table-column>
+              <el-table-column label="操作" width="100">
+                <template slot-scope="scope">
+                  <el-button type="text" @click="tenderFileList.splice(scope.$index, 1)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <div class="bidderList" style="margin-top: 10px;">
+            <el-button type="primary" style="margin-bottom: 10px" @click="openAddBidder">添加投标单位</el-button>
+            <el-table :data="bidList" height="390px">
+              <el-table-column type="index" label="序号" width="60"></el-table-column>
+              <el-table-column prop="bidderName" label="投标单位名称"></el-table-column>
+              <el-table-column label="文件名称">
+                <template slot-scope="{ row }">
+                  {{ (row.fileList || []).map(f => f.fileName).join('、') }}
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="100">
+                <template slot-scope="scope">
+                  <el-button type="text" @click="bidList.splice(scope.$index, 1)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <div class="btn">
+            <el-button
+              type="primary"
+              v-if="tenderFileList.length && bidList.length"
+              @click="startAnalyse"
+            >确定</el-button>
+          </div>
+        </div>
+      </div>
+
+      <el-dialog title="添加投标单位" :visible.sync="bidderDialogVisible" :close-on-click-modal="false" width="520px">
+        <el-form :model="bidderForm" label-width="120px">
+          <el-form-item label="投标单位名称" required>
+            <el-input v-model="bidderForm.bidderName" placeholder="请输入投标单位名称"></el-input>
+          </el-form-item>
+          <el-form-item label="上传文件">
+            <el-button type="primary" size="small" @click="mockUploadBidFile">上传文件</el-button>
+            <el-table :data="bidderForm.fileList" style="margin-top: 8px" size="small">
+              <el-table-column type="index" label="序号" width="60"></el-table-column>
+              <el-table-column prop="name" label="文件名称"></el-table-column>
+              <el-table-column label="操作" width="80">
+                <template slot-scope="scope">
+                  <el-button type="text" @click="bidderForm.fileList.splice(scope.$index, 1)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-form-item>
+        </el-form>
+        <span slot="footer">
+          <el-button type="primary" @click="confirmAddBidder">确定</el-button>
+          <el-button @click="bidderDialogVisible = false">取消</el-button>
+        </span>
+      </el-dialog>
+    </div>
+
+    <!-- AI 分析报告页（对应原路由 /AIreport） -->
+    <div class="technology-ai-report" v-else>
+      <div class="top-nav-bar">
+        <el-button type="text" icon="el-icon-upload2" @click="go('upload')">文件上传</el-button>
+      </div>
+      <div class="split-layout">
+        <!-- 左侧：文件树 + PDF 预览 -->
+        <div class="split-left">
+          <div class="pdf-file-list">
+            <div class="sider-bar" :class="{ collapsed: !isSlide }" :style="{ flex: isSlide ? '0 0 200px' : '0 0 0px' }">
+              <div class="search">
+                <el-input
+                  placeholder="请输入投标单位名称"
+                  size="small"
+                  clearable
+                  v-model.trim="searchText"
+                ></el-input>
+              </div>
+              <div class="menu">
+                <el-scrollbar style="height: 100%">
+                  <el-menu
+                    :default-active="activeFileId"
+                    :default-openeds="openedMenus"
+                    background-color="#545155"
+                    text-color="#fff"
+                    active-text-color="#fff"
+                    @select="handleSelectFile"
+                  >
+                    <el-submenu index="zbfile">
+                      <template slot="title">
+                        <span title="招标文件">招标文件</span>
+                      </template>
+                      <el-menu-item
+                        v-for="f in tenderInfo.fileList"
+                        :key="f.value"
+                        :index="f.value"
+                        :style="activeFileId === f.value ? { backgroundColor: '#259aff' } : {}"
+                      >
+                        <span :title="f.label">{{ f.label }}</span>
+                      </el-menu-item>
+                    </el-submenu>
+                    <el-submenu
+                      v-for="b in filteredBidders"
+                      :key="b.value"
+                      :index="b.value"
+                    >
+                      <template slot="title">
+                        <span :title="b.label">{{ b.label }}</span>
+                      </template>
+                      <el-menu-item
+                        v-for="f in b.fileList"
+                        :key="f.value"
+                        :index="f.value"
+                        :style="activeFileId === f.value ? { backgroundColor: '#259aff' } : {}"
+                      >
+                        <span :title="f.label">{{ f.label }}</span>
+                      </el-menu-item>
+                    </el-submenu>
+                  </el-menu>
+                </el-scrollbar>
+              </div>
+              <div class="toogle_menu" :style="{ left: isSlide ? '200px' : '0px' }" @click="isSlide = !isSlide">
+                <i :class="isSlide ? 'el-icon-arrow-left' : 'el-icon-arrow-right'"></i>
+              </div>
+            </div>
+            <div class="pdf">
+              <div class="toolbar">
+                <div class="pdf-title">{{ currentFileLabel }}</div>
+              </div>
+              <div class="evalu-pdf-container">
+                <div class="pdf-placeholder">
+                  <div class="doc-mock">
+                    <h2>{{ currentFileLabel }}</h2>
+                    <p v-for="(line, i) in currentDocLines" :key="i" v-html="line"></p>
+                    <p style="margin-top: 24px; color: #999; font-size: 12px;">
+                      （本地原型：PDF 预览区占位。原系统通过 pdf.js iframe 加载文件服务。）
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 中栏：评审因素（含经济技术一致性入口） -->
+        <div class="split-factor">
+          <div class="factor-panel">
+            <div class="factor-panel-title">
+              <img src="./assets/AI-icon-gif.png" alt="" class="factor-ai-icon">
+              <span>AI分析结果</span>
+            </div>
+            <div class="factor-panel-sub">评审因素</div>
+            <div class="factor-list">
+              <div
+                v-for="factor in factorList"
+                :key="factor.id"
+                class="factor-card"
+                :class="{ active: activeFactorId === factor.id }"
+                @click="selectFactor(factor.id)"
+              >
+                <div class="factor-card-name">{{ factor.name }}</div>
+                <div class="factor-card-bar-wrap">
+                  <div class="factor-card-bar">
+                    <div
+                      class="factor-card-bar-inner"
+                      :style="{ width: factor.score + '%', background: factor.barColor }"
+                    ></div>
+                  </div>
+                  <span class="factor-card-score">{{ factor.scoreText }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="factor-panel-tip">仅分析内容完整性，不分析内容优劣</div>
+          </div>
+        </div>
+
+        <!-- 右侧：随评审因素切换 -->
+        <div class="split-right" :class="{ 'split-right-light': activeFactorId === 'consistency' }">
+          <!-- 经济技术一致性模块 -->
+          <div class="consistency-panel" v-if="activeFactorId === 'consistency'">
+            <div class="consistency-summary">
+              <div class="consistency-summary-track" ref="summaryTrack">
+                <div
+                  v-for="(card, idx) in consistencyCards"
+                  :key="card.id"
+                  class="consistency-summary-card"
+                  :class="{ active: activeConsistencyId === card.id }"
+                  @click="anchorConsistency(card.id)"
+                >
+                  <div class="consistency-summary-card-title">
+                    <i class="dot" :class="card.status"></i>
+                    <span>{{ card.title }}</span>
+                  </div>
+                  <p class="consistency-summary-card-desc">{{ card.summary }}</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="consistency-detail" ref="consistencyDetail">
+              <div
+                v-for="(card, idx) in consistencyCards"
+                :key="'detail-' + card.id"
+                class="consistency-block"
+                :id="'consistency-' + card.id"
+              >
+                <div class="consistency-block-header">
+                  <span class="consistency-block-index">{{ idx + 1 }}</span>
+                  <span class="consistency-block-title">{{ card.title }}</span>
+                </div>
+                <div
+                  v-for="(item, iIdx) in card.items"
+                  :key="item.id"
+                  class="consistency-item"
+                >
+                  <div class="consistency-item-head">
+                    <span class="consistency-item-name">{{ (iIdx + 1) }} {{ item.name }}</span>
+                    <span
+                      class="consistency-item-tag"
+                      :class="item.pass ? 'pass' : 'fail'"
+                    >
+                      <i :class="item.pass ? 'el-icon-success' : 'el-icon-error'"></i>
+                      {{ item.pass ? '符合' : '不符合' }}
+                    </span>
+                  </div>
+                  <div class="consistency-item-body">
+                    <div class="consistency-field">
+                      <div class="consistency-field-label">参考评审点</div>
+                      <div class="consistency-field-content">{{ item.refPoint }}</div>
+                    </div>
+                    <div class="consistency-field">
+                      <div class="consistency-field-label">AI分析描述</div>
+                      <div class="consistency-field-content ai-desc">{{ item.aiDesc }}</div>
+                    </div>
+                    <div class="consistency-field">
+                      <div class="consistency-field-label">投标文件响应原文</div>
+                      <div class="consistency-field-content">
+                        <span>{{ item.response }}</span>
+                        <span
+                          v-for="(p, pIdx) in item.pages"
+                          :key="pIdx"
+                          class="page-tag"
+                          @click="locatePdf(item.fileId, p)"
+                        >P{{ p }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 原有完整性分析模块 -->
+          <div class="report-detail" v-else>
+            <div class="report-detail-header progressed">
+              <div class="report-detail-header-result">
+                <div class="report-detail-header-result-icon">
+                  <img src="./assets/AI-icon-gif.png" alt="">
+                  <div class="ai-text-result-txt"><span>{{ activeFactorName }}</span></div>
+                </div>
+                <div class="report-detail-header-result-list">
+                  <div>
+                    <div><span>{{ result.bidderCount }}</span>家</div>
+                    <div class="report-detail-header-result-list-item">投标单位</div>
+                  </div>
+                  <div>
+                    <div><span>{{ result.clauseCount }}</span>项</div>
+                    <div class="report-detail-header-result-list-item">AI评审点</div>
+                  </div>
+                  <div>
+                    <div><span>{{ result.minutes }}</span>分<span>{{ result.seconds }}</span>秒</div>
+                    <div class="report-detail-header-result-list-item">AI分析用时</div>
+                  </div>
+                </div>
+                <div class="result-btn" @click="compareVisible = true">
+                  <i></i>
+                  完整性对比
+                </div>
+              </div>
+            </div>
+            <div class="report-detail-btn">
+              <i class="el-icon-info"></i>
+              仅分析内容完整性，不分析内容优劣
+            </div>
+            <div class="report-detail-body">
+              <div class="bidderList-body" ref="bidderScroll">
+                <div
+                  v-for="bidder in filteredBidders"
+                  :key="bidder.value"
+                  class="bidder-item-box"
+                  :class="'bidder-item-' + bidder.value"
+                  :id="'bidder-' + bidder.value"
+                >
+                  <p class="bidder-item-box-title">
+                    <img src="./assets/单位.png" alt="" width="20" height="20">
+                    {{ bidder.label }}
+                  </p>
+                  <div
+                    v-for="(clause, cIdx) in filteredClauses(bidder)"
+                    :key="clause.clauseId + '-' + cIdx"
+                    class="bidder-item-box-card"
+                  >
+                    <div
+                      class="bidder-item-box-card-header"
+                      :class="clause.isSlide ? 'bidder-item-box-card-header-active' : 'bidder-item-box-card-header-normal'"
+                      @click="toggleClause(clause)"
+                    >
+                      <div class="bidder-item-box-card-header-left">
+                        <p :title="clause.clauseName">{{ clause.clauseName }}</p>
+                        <span>参考评审点:<i><i>{{ clause.refCount }}</i>项</i></span>
+                        <span>响应点:<i><i>{{ clause.respCount }}</i>项</i></span>
+                      </div>
+                      <div class="bidder-item-box-card-header-right">
+                        <div>
+                          <p :class="{ 'bidder-item-box-card-header-right-complete': clause.inteValue === 100 }">
+                            {{ clause.inteValue }} <span>%</span>
+                          </p>
+                          <span>内容完整性</span>
+                        </div>
+                        <div></div>
+                        <div class="toggle_report">
+                          <span>详情</span>
+                          <i :class="clause.isSlide ? 'el-icon-arrow-up' : 'el-icon-arrow-down'"></i>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="bidder-item-box-card-body" v-if="clause.isSlide">
+                      <div class="report show-body-element">
+                        <div
+                          class="inspectionItem"
+                          v-for="(item, iIdx) in clause.items"
+                          :key="iIdx"
+                        >
+                          <div
+                            class="inspectionItemTitle"
+                            :style="{ color: item.result !== 1 ? '#F56062' : '#fff' }"
+                          >
+                            {{ iIdx + 1 }}、【{{ item.inspectionItem }}】：
+                          </div>
+                          <table>
+                            <tr>
+                              <th>参考评审点</th>
+                              <th>投标响应内容</th>
+                              <th>理由阐述</th>
+                            </tr>
+                            <tr v-for="(detail, dIdx) in item.details" :key="dIdx">
+                              <td>
+                                <div style="font-weight: bolder;">{{ detail.ref }}；</div>
+                              </td>
+                              <td>
+                                <div v-if="detail.response" class="objectParagraphText" :title="detail.response">
+                                  {{ detail.response }}
+                                </div>
+                                <div v-else class="inspectionItemNo">
+                                  <i class="el-icon-error"></i> 未识别到相应内容
+                                </div>
+                                <div class="objectParagraphFile" v-if="detail.fileLabel">
+                                  相关原文：
+                                  <span @click="locatePdf(detail.fileId, detail.page)">
+                                    《{{ detail.fileLabel }}》 P{{ detail.page }}
+                                  </span>
+                                </div>
+                              </td>
+                              <td>{{ detail.reason || '—' }}</td>
+                            </tr>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <el-dialog title="完整性对比" :visible.sync="compareVisible" width="720px" custom-class="compare-table">
+        <el-table :data="compareRows" border size="small">
+          <el-table-column prop="clauseName" label="评审因素" min-width="160"></el-table-column>
+          <el-table-column
+            v-for="b in filteredBidders"
+            :key="b.value"
+            :label="b.label"
+            align="center"
+            width="120"
+          >
+            <template slot-scope="{ row }">
+              <span :style="{ color: row[b.value] === 100 ? '#67C23A' : '#F2FF4C', fontWeight: 700 }">
+                {{ row[b.value] }}%
+              </span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-dialog>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/vue@2.7.16/dist/vue.js"></script>
+  <script src="https://unpkg.com/element-ui@2.15.14/lib/index.js"></script>
+  <script>
+    // ========== Mock 数据（对齐原线上演示：深圳一建/二建/三建） ==========
+    function makeClauses(bidderId, fileId, fileLabel) {
+      var defs = [
+        { name: '施工方案与技术措施', ref: 148, resp: 76, inte: 51 },
+        { name: '质量管理体系与措施', ref: 60, resp: 44, inte: 73 },
+        { name: '安全、文明施工措施', ref: 55, resp: 47, inte: 85 },
+        { name: '重点与难点', ref: 42, resp: 24, inte: 57 },
+        { name: '工程进度计划与措施', ref: 15, resp: 14, inte: 100 },
+        { name: '雨季施工', ref: 1, resp: 1, inte: 100 },
+        { name: '成品保护措施', ref: 1, resp: 1, inte: 100 }
+      ];
+      return defs.map(function (d, idx) {
+        return {
+          clauseId: bidderId + '-c' + idx,
+          clauseName: d.name,
+          refCount: d.ref,
+          respCount: d.resp,
+          inteValue: d.inte,
+          isSlide: false,
+          items: [
+            {
+              inspectionItem: d.name + '完整性',
+              result: d.inte >= 80 ? 1 : 0,
+              details: [
+                {
+                  ref: '招标文件要求对「' + d.name + '」作出完整响应',
+                  response: d.inte === 100
+                    ? '投标文件中已对「' + d.name + '」作出完整响应，覆盖主要评审要点。'
+                    : (d.inte >= 70
+                      ? '投标文件部分响应「' + d.name + '」，仍有部分要点未覆盖。'
+                      : ''),
+                  reason: d.inte === 100
+                    ? '响应完整，内容与招标要求匹配。'
+                    : (d.inte >= 70 ? '部分要点缺失，完整性不足。' : '未识别到相应内容'),
+                  fileId: fileId,
+                  fileLabel: fileLabel,
+                  page: 3 + idx
+                }
+              ]
+            }
+          ]
+        };
+      });
+    }
+
+    var MOCK = {
+      tender: {
+        value: 'zbfile',
+        label: '招标文件',
+        fileList: [
+          { value: 'f-zb-1', label: '招标文件-进度演示.pdf', docType: 'tender' },
+          { value: 'f-zb-2', label: '招标清单文件.pdf', docType: 'tender' }
+        ]
+      },
+      bidders: [
+        {
+          value: 'be856fa8',
+          label: '深圳一建',
+          fileList: [{ value: 'f-b1-1', label: '技术标-工作内容.pdf', docType: 'bid' }]
+        },
+        {
+          value: 'adec0236',
+          label: '深圳三建',
+          fileList: [{ value: 'f-b3-1', label: '技术标-工作内容-工程量清单多项-缺多项.pdf', docType: 'bid' }]
+        },
+        {
+          value: '2f487f43',
+          label: '深圳二建',
+          fileList: [{ value: 'f-b2-1', label: '技术标-工作内容-工程量清单多项.pdf', docType: 'bid' }]
+        }
+      ]
+    };
+
+    MOCK.bidders.forEach(function (b) {
+      var f = b.fileList[0];
+      b.clauseList = makeClauses(b.value, f.value, f.label);
+    });
+
+    // 经济技术一致性 Mock（对齐截图结构）
+    var CONSISTENCY_CARDS = [
+      {
+        id: 'sgfa',
+        title: '施工方案与技术措施一致性',
+        status: 'warn',
+        summary: 'AI检测到施工方案中土石方开挖工艺与工程量清单计量口径存在2处不一致，建议复核机械配置与清单项对应关系。',
+        items: [
+          {
+            id: 'sgfa-1',
+            name: '土石方开挖',
+            pass: true,
+            refPoint: '招标文件要求土石方开挖应明确开挖方式、机械配置及与清单计量规则的对应关系，保证技术标与经济标口径一致。',
+            aiDesc: '投标文件中土石方开挖方案已明确分层开挖、机械组合及弃土运输路径，并与清单土方项目特征描述基本一致。',
+            response: '本工程土石方开挖采用挖掘机分层开挖，自卸汽车外运，开挖坡度按设计要求控制…',
+            pages: [129, 11],
+            fileId: 'f-b1-1'
+          },
+          {
+            id: 'sgfa-2',
+            name: '基坑支护',
+            pass: false,
+            refPoint: '技术标应说明基坑支护形式，并与清单中支护相关项目、措施费对应。',
+            aiDesc: '技术标描述采用放坡开挖，但经济标清单中列有钢板桩支护项目，二者不一致。',
+            response: '基坑深度较浅，拟采用自然放坡，必要时辅以喷锚…',
+            pages: [36],
+            fileId: 'f-b1-1'
+          }
+        ]
+      },
+      {
+        id: 'zlgl',
+        title: '质量管理体系一致性',
+        status: 'ok',
+        summary: '质量保证体系、检验批划分与清单主要分部分项对应关系清晰，未发现明显冲突。',
+        items: [
+          {
+            id: 'zlgl-1',
+            name: '质量保证体系',
+            pass: true,
+            refPoint: '应建立项目质量责任制，关键工序实行三检制，并与合同质量目标一致。',
+            aiDesc: '质量保证体系描述完整，岗位职责清晰，与招标质量目标匹配。',
+            response: '项目经理为工程质量第一责任人，实行自检、互检、专检三检制度…',
+            pages: [88],
+            fileId: 'f-b1-1'
+          }
+        ]
+      },
+      {
+        id: 'aqwm',
+        title: '安全文明施工一致性',
+        status: 'warn',
+        summary: '安全文明措施总体完整，但临时用电方案与措施项目清单中部分费用项对应不足。',
+        items: [
+          {
+            id: 'aqwm-1',
+            name: '临时用电',
+            pass: false,
+            refPoint: '临时用电方案应与措施项目清单中的临时设施、安全文明施工费对应。',
+            aiDesc: '技术标有临时用电专篇，但清单措施费中未见对应专项费用拆分说明。',
+            response: '现场采用TN-S系统，三级配电两级保护…',
+            pages: [102],
+            fileId: 'f-b1-1'
+          },
+          {
+            id: 'aqwm-2',
+            name: '围挡与警示',
+            pass: true,
+            refPoint: '施工围挡、警示标识应符合安全文明施工要求。',
+            aiDesc: '围挡高度、材质及警示设置描述完整，与措施要求一致。',
+            response: '沿红线设置2.5m封闭围挡，出入口设置洗车台及警示标志…',
+            pages: [105],
+            fileId: 'f-b1-1'
+          }
+        ]
+      },
+      {
+        id: 'zdnd',
+        title: '重难点措施一致性',
+        status: 'ok',
+        summary: '重难点分析与对应专项方案、清单措施项基本对应，整体一致性较好。',
+        items: [
+          {
+            id: 'zdnd-1',
+            name: '交通疏导',
+            pass: true,
+            refPoint: '交通疏导专项方案应与现场组织及措施费用相对应。',
+            aiDesc: '交通疏导方案完整，节点安排与措施描述一致。',
+            response: '分阶段交通导改，设置临时通行车道及导流标志…',
+            pages: [141],
+            fileId: 'f-b1-1'
+          }
+        ]
+      },
+      {
+        id: 'jdjh',
+        title: '进度计划与措施一致性',
+        status: 'ok',
+        summary: '总工期、关键节点与经济标工期承诺一致，资源配置描述匹配。',
+        items: [
+          {
+            id: 'jdjh-1',
+            name: '总工期安排',
+            pass: true,
+            refPoint: '进度计划应满足招标工期，关键节点可考核。',
+            aiDesc: '总工期与投标函承诺一致，关键里程碑清晰。',
+            response: '计划总工期365日历天，关键节点设置路基、路面、附属工程里程碑…',
+            pages: [56],
+            fileId: 'f-b1-1'
+          }
+        ]
+      }
+    ];
+
+    var DOC_LINES = {
+      'f-zb-1': [
+        '第一章 招标公告',
+        '本工程为市政道路改扩建项目，采用公开招标方式。',
+        '投标人须具备市政公用工程施工总承包贰级及以上资质。',
+        '<span class="hl">评审因素包括：施工方案与技术措施、质量管理体系、安全文明施工、重难点分析、进度计划等。</span>',
+        '第二章 投标人须知',
+        '技术标应单独密封，不得出现投标人名称及可识别信息。'
+      ],
+      'f-zb-2': [
+        '招标工程量清单说明',
+        '本清单依据《建设工程工程量清单计价规范》编制。',
+        '投标人应仔细核对项目特征描述，漏项按相关规定处理。'
+      ],
+      'f-b1-1': [
+        '深圳一建 · 技术标',
+        '一、施工方案与技术措施',
+        '<span class="hl">针对本工程特点，拟采用分段流水施工，重点保障路基、路面交叉施工协调。</span>',
+        '二、质量管理体系与措施',
+        '建立项目质量责任制，实行三检制，关键工序旁站监督。',
+        '三、安全、文明施工措施',
+        '严格执行安全生产标准化，设置围挡、警示标识及洗车台。'
+      ],
+      'f-b3-1': [
+        '深圳三建 · 技术标',
+        '一、施工方案与技术措施',
+        '结合现场交通疏导要求，编制专项交通组织方案。',
+        '二、工程量清单响应说明',
+        '<span class="hl">部分清单项存在多项/缺项情况，需重点复核。</span>'
+      ],
+      'f-b2-1': [
+        '深圳二建 · 技术标',
+        '一、施工方案与技术措施',
+        '采用机械化施工为主、人工辅助的组合方式。',
+        '二、进度计划',
+        '<span class="hl">总工期满足招标要求，关键节点设置里程碑控制点。</span>'
+      ]
+    };
+
+    new Vue({
+      el: '#app',
+      data: function () {
+        return {
+          route: (location.hash.replace('#/', '') || 'AIreport').split('?')[0],
+          // upload
+          tenderFileList: [
+            { name: '招标文件-进度演示.pdf' },
+            { name: '招标清单文件.pdf' }
+          ],
+          bidList: [
+            { bidderName: '深圳一建', fileList: [{ fileName: '技术标-工作内容.pdf' }] },
+            { bidderName: '深圳三建', fileList: [{ fileName: '技术标-工作内容-工程量清单多项-缺多项.pdf' }] },
+            { bidderName: '深圳二建', fileList: [{ fileName: '技术标-工作内容-工程量清单多项.pdf' }] }
+          ],
+          bidderDialogVisible: false,
+          bidderForm: { bidderName: '', fileList: [] },
+          // report
+          isSlide: true,
+          searchText: '',
+          tenderInfo: MOCK.tender,
+          bidders: MOCK.bidders,
+          activeFileId: 'f-zb-1',
+          openedMenus: ['zbfile', 'be856fa8', 'adec0236', '2f487f43'],
+          result: { bidderCount: 3, clauseCount: 322, minutes: 51, seconds: 56 },
+          compareVisible: false,
+          activeFactorId: 'consistency',
+          activeConsistencyId: 'sgfa',
+          consistencyCards: CONSISTENCY_CARDS,
+          factorList: [
+            { id: 'consistency', name: '经济技术一致性', score: 74, scoreText: '74.03', barColor: 'linear-gradient(90deg, #A855F7 0%, #EC4899 100%)' },
+            { id: '施工方案与技术措施', name: '施工方案与技术措施', score: 51, scoreText: '51%', barColor: 'linear-gradient(90deg, #3B82F6 0%, #60A5FA 100%)' },
+            { id: '质量管理体系与措施', name: '质量管理体系与措施', score: 73, scoreText: '73%', barColor: 'linear-gradient(90deg, #22C55E 0%, #4ADE80 100%)' },
+            { id: '安全、文明施工措施', name: '安全、文明施工措施', score: 85, scoreText: '85%', barColor: 'linear-gradient(90deg, #22C55E 0%, #4ADE80 100%)' },
+            { id: '重点与难点', name: '重点与难点', score: 57, scoreText: '57%', barColor: 'linear-gradient(90deg, #F59E0B 0%, #FBBF24 100%)' },
+            { id: '工程进度计划与措施', name: '工程进度计划与措施', score: 100, scoreText: '100%', barColor: 'linear-gradient(90deg, #22C55E 0%, #4ADE80 100%)' },
+            { id: '雨季施工', name: '雨季施工', score: 100, scoreText: '100%', barColor: 'linear-gradient(90deg, #22C55E 0%, #4ADE80 100%)' },
+            { id: '成品保护措施', name: '成品保护措施', score: 100, scoreText: '100%', barColor: 'linear-gradient(90deg, #22C55E 0%, #4ADE80 100%)' }
+          ]
+        };
+      },
+      computed: {
+        filteredBidders: function () {
+          var q = this.searchText;
+          if (!q) return this.bidders;
+          return this.bidders.filter(function (b) {
+            return b.label.indexOf(q) !== -1;
+          });
+        },
+        activeFactorName: function () {
+          var self = this;
+          var hit = this.factorList.find(function (f) { return f.id === self.activeFactorId; });
+          return hit ? hit.name : '分析结果';
+        },
+        currentFileLabel: function () {
+          var id = this.activeFileId;
+          var found = this.tenderInfo.fileList.find(function (f) { return f.value === id; });
+          if (found) return found.label;
+          for (var i = 0; i < this.bidders.length; i++) {
+            var hit = this.bidders[i].fileList.find(function (f) { return f.value === id; });
+            if (hit) return hit.label;
+          }
+          return '';
+        },
+        currentDocLines: function () {
+          return DOC_LINES[this.activeFileId] || ['暂无预览内容'];
+        },
+        compareRows: function () {
+          var names = {};
+          this.bidders.forEach(function (b) {
+            b.clauseList.forEach(function (c) {
+              if (!names[c.clauseName]) names[c.clauseName] = { clauseName: c.clauseName };
+              names[c.clauseName][b.value] = c.inteValue;
+            });
+          });
+          return Object.keys(names).map(function (k) { return names[k]; });
+        }
+      },
+      methods: {
+        go: function (name) {
+          this.route = name;
+          location.hash = '#/' + name;
+        },
+        mockUploadTender: function () {
+          this.tenderFileList.push({ name: '招标文件-补充说明.pdf' });
+          this.$message.success('已模拟添加招标文件');
+        },
+        openAddBidder: function () {
+          this.bidderForm = { bidderName: '', fileList: [] };
+          this.bidderDialogVisible = true;
+        },
+        mockUploadBidFile: function () {
+          if (!this.bidderForm.bidderName) {
+            this.$message.warning('请先填写投标单位名称');
+            return;
+          }
+          this.bidderForm.fileList.push({ name: this.bidderForm.bidderName + '-技术标.pdf' });
+        },
+        confirmAddBidder: function () {
+          if (!this.bidderForm.bidderName) {
+            this.$message.warning('请填写投标单位名称');
+            return;
+          }
+          this.bidList.push({
+            bidderName: this.bidderForm.bidderName,
+            fileList: this.bidderForm.fileList.map(function (f) {
+              return { fileName: f.name };
+            })
+          });
+          this.bidderDialogVisible = false;
+          this.$message.success('已添加投标单位');
+        },
+        startAnalyse: function () {
+          this.$message.success('已提交分析（本地原型直接进入结果页）');
+          this.go('AIreport');
+        },
+        selectFactor: function (id) {
+          this.activeFactorId = id;
+          if (id === 'consistency' && this.consistencyCards.length) {
+            this.activeConsistencyId = this.consistencyCards[0].id;
+          }
+        },
+        filteredClauses: function (bidder) {
+          var fid = this.activeFactorId;
+          if (!fid || fid === 'consistency') return bidder.clauseList;
+          return bidder.clauseList.filter(function (c) {
+            return c.clauseName === fid;
+          });
+        },
+        anchorConsistency: function (id) {
+          this.activeConsistencyId = id;
+          this.$nextTick(function () {
+            var el = document.getElementById('consistency-' + id);
+            var box = this.$refs.consistencyDetail;
+            if (el && box) {
+              var top = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+              box.scrollTo({ top: Math.max(top - 8, 0), behavior: 'smooth' });
+            }
+          }.bind(this));
+        },
+        handleSelectFile: function (key) {
+          this.activeFileId = key;
+          var self = this;
+          this.bidders.forEach(function (b) {
+            var hit = b.fileList.some(function (f) { return f.value === key; });
+            if (hit) {
+              self.$nextTick(function () {
+                var el = document.getElementById('bidder-' + b.value);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              });
+            }
+          });
+        },
+        toggleClause: function (clause) {
+          this.$set(clause, 'isSlide', !clause.isSlide);
+        },
+        locatePdf: function (fileId, page) {
+          this.activeFileId = fileId;
+          this.$message.info('已定位到原文：P' + page + '（原型占位）');
+        }
+      },
+      mounted: function () {
+        var self = this;
+        window.addEventListener('hashchange', function () {
+          self.route = (location.hash.replace('#/', '') || 'AIreport').split('?')[0];
+        });
+        if (!location.hash) location.hash = '#/AIreport';
+      }
+    });
+  </script>
+</body>
+</html>
