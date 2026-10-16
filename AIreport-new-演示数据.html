@@ -315,13 +315,6 @@ html,body{height:100%;margin:0;overflow:hidden;font-size:14px;color:#555;font-fa
                   ><i class="el-icon-arrow-right"></i></button>
                 </div>
               </div>
-              <div
-                v-show="cardTip.visible"
-                ref="cardTip"
-                class="consistency-card-tip"
-                :class="{'is-below': cardTip.below}"
-                :style="{left: cardTip.left + 'px', top: cardTip.top + 'px'}"
-              >{{ cardTip.text }}</div>
               <div class="module-body">
                 <div class="module-body-scroll" ref="consistencyDetail" @scroll="onConsistencyScroll">
                   <div
@@ -457,6 +450,13 @@ html,body{height:100%;margin:0;overflow:hidden;font-size:14px;color:#555;font-fa
       </div>
     </div>
   </div>
+  <div
+    v-show="cardTip.visible"
+    ref="cardTip"
+    class="consistency-card-tip"
+    :class="{'is-below': cardTip.below}"
+    :style="{left: cardTip.left + 'px', top: cardTip.top + 'px'}"
+  >{{ cardTip.text }}</div>
 </div>
 <script src="https://unpkg.com/vue@2.7.16/dist/vue.js"></script>
 <script src="https://unpkg.com/element-ui@2.15.14/lib/index.js"></script>
