@@ -98,17 +98,11 @@ html,body{height:100%;margin:0;overflow:hidden;font-size:14px;color:#555;font-fa
 }
 .consistency-summary-track::-webkit-scrollbar{display:none;height:0}
 .consistency-summary-card{
-  flex:0 0 300px;width:300px;height:129px;box-sizing:border-box;
+  flex:0 0 var(--summary-card-w, 300px);width:var(--summary-card-w, 300px);height:129px;box-sizing:border-box;
   background:#fff;border:1px solid #E6F0FA;border-radius:4px;
   box-shadow:3px 0 6px 0 rgba(85,136,216,.29);
   cursor:pointer;overflow:hidden;display:flex;flex-direction:column;
   transition:border-color .2s;
-}
-@media (max-width:1439px){
-  .consistency-summary-card{flex-basis:200px;width:200px}
-}
-@media (max-width:1024px){
-  .consistency-summary-card{flex-basis:130px;width:130px}
 }
 .consistency-summary-card:hover{border-color:#91b4f0}
 .consistency-summary-card.active{border-color:#2461F5}
@@ -740,6 +734,8 @@ new Vue({
       });
     },
     updateSummaryArrow: function () {
+      this.ensureSummaryObserver();
+      this.fitSummaryCardSize();
       var track = this.$refs.summaryTrack;
       if (!track) {
         this.summaryCanPrev = false;
@@ -748,6 +744,37 @@ new Vue({
       }
       this.summaryCanPrev = track.scrollLeft > 2;
       this.summaryCanNext = track.scrollLeft + track.clientWidth < track.scrollWidth - 2;
+    },
+    ensureSummaryObserver: function () {
+      var track = this.$refs.summaryTrack;
+      if (!track || !window.ResizeObserver) return;
+      var inner = track.parentElement;
+      if (!inner || this._summaryObserved === inner) return;
+      if (this._summaryRO) this._summaryRO.disconnect();
+      var self = this;
+      this._summaryRO = new ResizeObserver(function () {
+        self.fitSummaryCardSize();
+        var box = self.$refs.summaryTrack;
+        if (!box) return;
+        self.summaryCanPrev = box.scrollLeft > 2;
+        self.summaryCanNext = box.scrollLeft + box.clientWidth < box.scrollWidth - 2;
+      });
+      this._summaryRO.observe(inner);
+      this._summaryObserved = inner;
+    },
+    fitSummaryCardSize: function () {
+      var track = this.$refs.summaryTrack;
+      if (!track || !track.parentElement) return;
+      var cards = track.querySelectorAll('.consistency-summary-card');
+      var n = cards.length;
+      if (!n) return;
+      var gap = parseFloat(window.getComputedStyle(track).columnGap);
+      if (isNaN(gap)) gap = 12;
+      var contentW = track.clientWidth - 4;
+      if (contentW < 40) return;
+      var room = (contentW - (n - 1) * gap) / n;
+      var chosen = Math.min(300, Math.max(130, room));
+      track.style.setProperty('--summary-card-w', chosen.toFixed(2) + 'px');
     },
     onSummaryTrackScroll: function () {
       this.cardTip.visible = false;
@@ -1025,6 +1052,7 @@ new Vue({
     window.addEventListener('resize', this.onWinResize);
   },
   beforeDestroy: function () {
+    if (this._summaryRO) this._summaryRO.disconnect();
     window.removeEventListener('resize', this.onWinResize);
     if (this.canvasAnimationFrame) cancelAnimationFrame(this.canvasAnimationFrame);
     if (this._anchorAnimFrame) cancelAnimationFrame(this._anchorAnimFrame);
