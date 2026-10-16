@@ -126,6 +126,19 @@ html,body{height:100%;margin:0;overflow:hidden;font-size:14px;color:#555;font-fa
   flex:1;min-width:0;font-size:14px;font-weight:700;color:#333;line-height:22px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
+.consistency-card-tip{
+  position:fixed;z-index:3000;max-width:360px;box-sizing:border-box;
+  padding:8px 12px;background:#303133;color:#fff;font-size:12px;line-height:20px;
+  border-radius:4px;pointer-events:none;white-space:pre-wrap;word-break:break-word;
+  box-shadow:0 2px 12px rgba(0,0,0,.18);
+}
+.consistency-card-tip:after{
+  content:"";position:absolute;left:50%;bottom:-6px;margin-left:-6px;
+  border:6px solid transparent;border-top-color:#303133;border-bottom:0;
+}
+.consistency-card-tip.is-below:after{
+  bottom:auto;top:-6px;border-top:0;border-bottom:6px solid #303133;
+}
 .consistency-summary-card-bd{
   flex:1;min-height:0;padding:10px 14px;font-size:14px;line-height:22px;color:#333;
   overflow:hidden;
@@ -280,10 +293,12 @@ html,body{height:100%;margin:0;overflow:hidden;font-size:14px;color:#555;font-fa
                       :data-summary-id="card.id"
                       :class="{active: activeConsistencyId===card.id}"
                       @click="anchorConsistency(card.id)"
+                      @mouseenter="onSummaryCardEnter($event, card)"
+                      @mouseleave="onSummaryCardLeave"
                     >
                       <div class="consistency-summary-card-hd">
                         <i class="dot">{{ ci + 1 }}</i>
-                        <span class="ttl" :title="card.title">{{ card.title }}</span>
+                        <span class="ttl">{{ card.title }}</span>
                       </div>
                       <div class="consistency-summary-card-bd">
                         <p class="consistency-summary-card-desc" v-html="formatSummaryHtml(card.summary)"></p>
@@ -306,6 +321,13 @@ html,body{height:100%;margin:0;overflow:hidden;font-size:14px;color:#555;font-fa
                   ><i class="el-icon-arrow-right"></i></button>
                 </div>
               </div>
+              <div
+                v-show="cardTip.visible"
+                ref="cardTip"
+                class="consistency-card-tip"
+                :class="{'is-below': cardTip.below}"
+                :style="{left: cardTip.left + 'px', top: cardTip.top + 'px'}"
+              >{{ cardTip.text }}</div>
               <div class="module-body">
                 <div class="module-body-scroll" ref="consistencyDetail" @scroll="onConsistencyScroll">
                   <div
@@ -444,7 +466,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-size:14px;color:#555;font-fa
 </div>
 <script src="https://unpkg.com/vue@2.7.16/dist/vue.js"></script>
 <script src="https://unpkg.com/element-ui@2.15.14/lib/index.js"></script>
-<script src="./fe-techai/demo/demo-data.js?v=huangzhou"></script>
+<script src="./fe-techai/demo/demo-data.js?v=cards3"></script>
 <script>
 new Vue({
   el: '#app',
@@ -461,6 +483,7 @@ new Vue({
       activeConsistencyId: '',
       consistencyScrolled: false,
       summaryCanPrev: false,
+      cardTip: { visible: false, text: '', left: 0, top: 0, below: false },
       summaryCanNext: false,
       canvasAnimationProgress: 1,
       canvasAnimationFrame: null,
@@ -603,14 +626,18 @@ new Vue({
       if (this[frameKey]) cancelAnimationFrame(this[frameKey]);
       var from = el.scrollTop;
       var dist = to - from;
-      if (Math.abs(dist) < 1) { el.scrollTop = to; return; }
+      var finish = function () {
+        self[frameKey] = null;
+        if (frameKey === '_anchorAnimFrame') self._summarySyncLock = false;
+      };
+      if (Math.abs(dist) < 1) { el.scrollTop = to; finish(); return; }
       var start = performance.now();
       var tick = function (now) {
         var p = Math.min((now - start) / duration, 1);
         var e = self.cubicBezierEase(p);
         el.scrollTop = from + dist * e;
         if (p < 1) self[frameKey] = requestAnimationFrame(tick);
-        else self[frameKey] = null;
+        else finish();
       };
       this[frameKey] = requestAnimationFrame(tick);
     },
@@ -637,6 +664,80 @@ new Vue({
     onConsistencyScroll: function () {
       var box = this.$refs.consistencyDetail;
       this.consistencyScrolled = !!(box && box.scrollTop > 0);
+      if (this._summarySyncFrame) return;
+      var self = this;
+      this._summarySyncFrame = requestAnimationFrame(function () {
+        self._summarySyncFrame = null;
+        self.syncSummaryFromDetail();
+      });
+    },
+    syncSummaryFromDetail: function () {
+      if (this._summarySyncLock) return;
+      var box = this.$refs.consistencyDetail;
+      if (!box) return;
+      var items = box.querySelectorAll('.detail-item');
+      if (!items.length) return;
+      var boxRect = box.getBoundingClientRect();
+      var totals = [];
+      var index = {};
+      var i;
+      for (i = 0; i < items.length; i++) {
+        var rect = items[i].getBoundingClientRect();
+        var vis = Math.min(rect.bottom, boxRect.bottom) - Math.max(rect.top, boxRect.top);
+        if (vis <= 1) continue;
+        var sec = items[i].closest('[id^="consistency-"]');
+        if (!sec) continue;
+        var id = sec.id.slice('consistency-'.length);
+        var row = index[id];
+        if (!row) {
+          row = { id: id, vis: 0, top: rect.top };
+          index[id] = row;
+          totals.push(row);
+        }
+        row.vis += vis;
+        if (rect.top < row.top) row.top = rect.top;
+      }
+      if (!totals.length) return;
+      var best = totals[0];
+      totals.forEach(function (row) {
+        if (row.vis > best.vis + 1) best = row;
+      });
+      var ids = totals.map(function (row) { return row.id; });
+      this.bringSummaryCardsIntoView(ids, best.id);
+    },
+    bringSummaryCardsIntoView: function (ids, activeId) {
+      if (!activeId) return;
+      var key = ids.join(',') + '|' + activeId;
+      if (key === this._summaryRangeKey) return;
+      this._summaryRangeKey = key;
+      this.activeConsistencyId = activeId;
+      var self = this;
+      this.$nextTick(function () {
+        var track = self.$refs.summaryTrack;
+        if (!track) return;
+        var nodes = ids.map(function (id) {
+          return track.querySelector('[data-summary-id="' + id + '"]');
+        }).filter(Boolean);
+        var active = track.querySelector('[data-summary-id="' + activeId + '"]');
+        if (!active) return;
+        var pad = 8;
+        var max = Math.max(0, track.scrollWidth - track.clientWidth);
+        var left = (nodes[0] || active).offsetLeft - pad;
+        var last = nodes.length ? nodes[nodes.length - 1] : active;
+        var right = last.offsetLeft + last.offsetWidth + pad;
+        var to = track.scrollLeft;
+        if (right - left <= track.clientWidth) {
+          if (left >= track.scrollLeft && right <= track.scrollLeft + track.clientWidth) return;
+          to = left;
+          if (right - to > track.clientWidth) to = right - track.clientWidth;
+        } else {
+          var elL = active.offsetLeft - pad;
+          var elR = active.offsetLeft + active.offsetWidth + pad;
+          if (elL >= track.scrollLeft && elR <= track.scrollLeft + track.clientWidth) return;
+          to = elL < track.scrollLeft ? elL : elR - track.clientWidth;
+        }
+        self.animateScrollLeft(track, Math.max(0, Math.min(to, max)), 480, '_summaryAnimFrame');
+      });
     },
     updateSummaryArrow: function () {
       var track = this.$refs.summaryTrack;
@@ -649,7 +750,51 @@ new Vue({
       this.summaryCanNext = track.scrollLeft + track.clientWidth < track.scrollWidth - 2;
     },
     onSummaryTrackScroll: function () {
+      this.cardTip.visible = false;
       this.updateSummaryArrow();
+    },
+    isTextTruncated: function (el) {
+      if (!el) return false;
+      return el.scrollWidth - el.clientWidth > 1 || el.scrollHeight - el.clientHeight > 1;
+    },
+    onSummaryCardEnter: function (evt, card) {
+      var root = evt.currentTarget;
+      var titleCut = this.isTextTruncated(root.querySelector('.ttl'));
+      var descCut = this.isTextTruncated(root.querySelector('.consistency-summary-card-desc'));
+      if (!titleCut && !descCut) {
+        this.cardTip.visible = false;
+        return;
+      }
+      var parts = [];
+      if (titleCut) parts.push(card.title || '');
+      if (descCut) parts.push(card.summary || '');
+      var rect = root.getBoundingClientRect();
+      this.cardTip.text = parts.join('\n');
+      this.cardTip.visible = true;
+      this.cardTip.left = rect.left;
+      this.cardTip.top = rect.top;
+      this.cardTip.below = false;
+      var self = this;
+      this.$nextTick(function () {
+        var tip = self.$refs.cardTip;
+        if (!tip || !self.cardTip.visible) return;
+        var tw = tip.offsetWidth;
+        var th = tip.offsetHeight;
+        var left = rect.left + rect.width / 2 - tw / 2;
+        var top = rect.top - th - 10;
+        var below = false;
+        if (top < 8) {
+          top = rect.bottom + 10;
+          below = true;
+        }
+        left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+        self.cardTip.left = left;
+        self.cardTip.top = top;
+        self.cardTip.below = below;
+      });
+    },
+    onSummaryCardLeave: function () {
+      this.cardTip.visible = false;
     },
     scrollSummaryBy: function (dir) {
       var track = this.$refs.summaryTrack;
@@ -693,6 +838,8 @@ new Vue({
     },
     anchorConsistency: function (id) {
       this.activeConsistencyId = id;
+      this._summaryRangeKey = '';
+      this._summarySyncLock = true;
       var self = this;
       this.$nextTick(function () {
         requestAnimationFrame(function () {
@@ -863,6 +1010,7 @@ new Vue({
       }, 100);
     },
     onWinResize: function () {
+      this.cardTip.visible = false;
       this.layoutHeader();
       this.drawClauseLines();
       this.updateSummaryArrow();
